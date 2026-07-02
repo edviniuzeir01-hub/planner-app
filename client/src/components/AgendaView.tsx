@@ -1,14 +1,15 @@
 import { Plus, Bell } from "lucide-react";
-import { CATEGORIES, PlannerEvent } from "../types";
+import { CatMap, catOf, PlannerEvent } from "../types";
 import { fmtDate, parseDate } from "../date";
 
 interface Props {
   eventsByDate: Record<string, PlannerEvent[]>;
+  catMap: CatMap;
   onEdit: (ev: PlannerEvent) => void;
   onAdd: (d: Date) => void;
 }
 
-export default function AgendaView({ eventsByDate, onEdit, onAdd }: Props) {
+export default function AgendaView({ eventsByDate, catMap, onEdit, onAdd }: Props) {
   const dates = Object.keys(eventsByDate).sort();
   const todayStr = fmtDate(new Date());
   const future = dates.filter((d) => d >= todayStr);
@@ -36,17 +37,21 @@ export default function AgendaView({ eventsByDate, onEdit, onAdd }: Props) {
             })}
           </p>
           <ul>
-            {eventsByDate[d].map((ev) => (
-              <li
-                key={ev.id}
-                style={{ ["--c" as string]: CATEGORIES[ev.category]?.color }}
-                onClick={() => onEdit(ev)}
-              >
-                <span className="agenda-time">{ev.startTime || "—"}</span>
-                <span className="agenda-title">{ev.title}</span>
-                {ev.reminderMinutes ? <Bell size={12} className="bell-mini" /> : null}
-              </li>
-            ))}
+            {eventsByDate[d].map((ev) => {
+              const cat = catOf(catMap, ev.category);
+              return (
+                <li
+                  key={ev.id}
+                  style={{ ["--c" as string]: cat.color }}
+                  onClick={() => onEdit(ev)}
+                >
+                  <span className="agenda-time">{ev.startTime || "—"}</span>
+                  <span className="agenda-title">{ev.title}</span>
+                  <span className="agenda-cat-dot" style={{ background: cat.color }} />
+                  {ev.reminderMinutes ? <Bell size={12} className="bell-mini" /> : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ))}

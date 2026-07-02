@@ -1,10 +1,9 @@
-import { PlannerEvent } from "./types";
+import { PlannerEvent, Category } from "./types";
 import { getSpace } from "./space";
 
 // În dev, Vite proxează /api către :4000. În producție, serverul servește totul.
 const BASE = "/api";
 
-// Fiecare cerere trimite codul calendarului curent.
 function headers(): HeadersInit {
   return { "Content-Type": "application/json", "X-Space": getSpace() };
 }
@@ -35,6 +34,22 @@ export const api = {
 
   deleteEvent: (id: string) =>
     fetch(`${BASE}/events/${id}`, { method: "DELETE", headers: headers() }).then((r) => json<void>(r)),
+
+  listCategories: () =>
+    fetch(`${BASE}/categories`, { headers: headers() }).then((r) => json<Category[]>(r)),
+
+  createCategory: (c: { label: string; color: string }) =>
+    fetch(`${BASE}/categories`, { method: "POST", headers: headers(), body: JSON.stringify(c) }).then(
+      (r) => json<Category>(r)
+    ),
+
+  updateCategory: (id: string, c: { label?: string; color?: string }) =>
+    fetch(`${BASE}/categories/${id}`, { method: "PUT", headers: headers(), body: JSON.stringify(c) }).then(
+      (r) => json<Category>(r)
+    ),
+
+  deleteCategory: (id: string) =>
+    fetch(`${BASE}/categories/${id}`, { method: "DELETE", headers: headers() }).then((r) => json<void>(r)),
 
   subscribe: (sub: PushSubscription) =>
     fetch(`${BASE}/subscribe`, { method: "POST", headers: headers(), body: JSON.stringify(sub) }).then(

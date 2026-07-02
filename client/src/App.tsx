@@ -4,7 +4,7 @@ import {
   CalendarDays, ListChecks, CalendarClock,
 } from "lucide-react";
 import {
-  CATEGORIES, CategoryKey, MONTH_NAMES, PlannerEvent, EventDraft,
+  CatMap, catOf, Category, MONTH_NAMES, PlannerEvent, EventDraft,
 } from "./types";
 import { fmtDate, parseDate, getCalendarGrid, minutesUntil, humanCountdown } from "./date";
 import { api } from "./api";
@@ -15,38 +15,57 @@ import AgendaView from "./components/AgendaView";
 import EventModal from "./components/EventModal";
 import AccountPanel from "./components/AccountPanel";
 import ThemePicker from "./components/ThemePicker";
+import CategoryManager from "./components/CategoryManager";
 
 type ViewMode = "month" | "day" | "agenda";
 
 export default function App() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [view, setView] = useState<ViewMode>("month");
   const [cursor, setCursor] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [draft, setDraft] = useState<EventDraft | null>(null);
   const [search, setSearch] = useState("");
-  const [activeCats, setActiveCats] = useState<CategoryKey[]>(
-    Object.keys(CATEGORIES) as CategoryKey[]
-  );
+  const [activeCats, setActiveCats] = useState<string[] | null>(null); // null = toate active
   const [pushState, setPushState] = useState<PushState>(currentPermission());
   const [vapidKey, setVapidKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const catMap: CatMap = useMemo(() => {
+    const m: CatMap = {};
+    categories.forEach((c) => (m[c.id] = { label: c.label, color: c.color }));
+    return m;
+  }, [categories]);
+
   /* ---- load ---- */
   const reload = useCallback(async () => {
     try {
-      const [list, cfg] = await Promise.all([api.listEvents(), api.getConfig()]);
+      const [list, cats, cfg] = await Promise.all([
+        api.listEvents(),
+        api.listCategories(),
+        api.getConfig(),
+      ]);
       setEvents(list);
+      setCategories(cats);
       setVapidKey(cfg.vapidPublicKey);
       if (!cfg.pushEnabled) setPushState("no-keys");
     } catch (e) {
-      setError("Nu mă pot conecta la server. Verifică dacă rulează pe :4000.");
+      setError("Nu mă pot conecta la server. Verifică dacă rulează.");
+    }
+  }, []);
+
+  const reloadCategories = useCallback(async () => {
+    try {
+      setCategories(await api.listCategories());
+    } catch (e) {
+      /* ignore */
     }
   }, []);
 
   useEffect(() => {
     reload();
-    const id = setInterval(reload, 60000); // resincronizează evenimentele
+    const id = setInterval(reload, 60000);
     return () => clearInterval(id);
   }, [reload]);
 
@@ -57,6 +76,8 @@ export default function App() {
   };
 
   /* ---- CRUD ---- */
+  const firstCat = categories[0]?.id || "altele";
+
   const openAdd = (date: Date) => {
     setDraft({
       id: null,
@@ -64,15 +85,13 @@ export default function App() {
       date: fmtDate(date),
       startTime: "09:00",
       endTime: "",
-      category: "curs",
+      category: firstCat,
       notes: "",
       reminderMinutes: 15,
     });
   };
 
-  const openEdit = (ev: PlannerEvent) => {
-    setDraft({ ...ev });
-  };
+  const openEdit = (ev: PlannerEvent) => setDraft({ ...ev });
 
   const saveDraft = async () => {
     if (!draft || !draft.title.trim() || !draft.date) return;
@@ -114,7 +133,7 @@ export default function App() {
   const filteredEvents = useMemo(() => {
     const q = search.trim().toLowerCase();
     return events.filter((e) => {
-      if (!activeCats.includes(e.category)) return false;
+      if (activeCats && !activeCats.includes(e.category)) return false;
       if (q && !`${e.title} ${e.notes}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -148,10 +167,13 @@ export default function App() {
     [cursor]
   );
 
-  const toggleCat = (key: CategoryKey) =>
-    setActiveCats((prev) =>
-      prev.includes(key) ? prev.filter((c) => c !== key) : [...prev, key]
-    );
+  const toggleCat = (id: string) => {
+    setActiveCats((prev) => {
+      const base = prev ?? categories.map((c) => c.id);
+      return base.includes(id) ? base.filter((c) => c !== id) : [...base, id];
+    });
+  };
+  const isCatActive = (id: string) => !activeCats || activeCats.includes(id);
 
   const goToday = () => {
     const t = new Date();
@@ -237,15 +259,15 @@ export default function App() {
           </div>
 
           <div className="cat-filters">
-            {(Object.keys(CATEGORIES) as CategoryKey[]).map((key) => (
+            {categories.map((cat) => (
               <button
-                key={key}
-                className={`chip ${activeCats.includes(key) ? "on" : "off"}`}
-                style={{ ["--c" as string]: CATEGORIES[key].color }}
-                onClick={() => toggleCat(key)}
+                key={cat.id}
+                className={`chip ${isCatActive(cat.id) ? "on" : "off"}`}
+                style={{ ["--c" as string]: cat.color }}
+                onClick={() => toggleCat(cat.id)}
               >
                 <span className="chip-dot" />
-                {CATEGORIES[key].label}
+                {cat.label}
               </button>
             ))}
           </div>
@@ -254,6 +276,7 @@ export default function App() {
             <MonthView
               grid={grid}
               eventsByDate={eventsByDate}
+              catMap={catMap}
               selectedDate={selectedDate}
               onSelect={(d) => {
                 setSelectedDate(d);
@@ -267,6 +290,7 @@ export default function App() {
             <DayView
               date={selectedDate}
               events={eventsByDate[fmtDate(selectedDate)] || []}
+              catMap={catMap}
               onPrev={() =>
                 setSelectedDate((d) => {
                   const n = new Date(d);
@@ -287,7 +311,7 @@ export default function App() {
           )}
 
           {view === "agenda" && (
-            <AgendaView eventsByDate={eventsByDate} onEdit={openEdit} onAdd={openAdd} />
+            <AgendaView eventsByDate={eventsByDate} catMap={catMap} onEdit={openEdit} onAdd={openAdd} />
           )}
         </main>
 
@@ -299,9 +323,10 @@ export default function App() {
           <ul className="upcoming-list">
             {upcoming.map((ev) => {
               const mins = minutesUntil(ev.date, ev.startTime);
+              const cat = catOf(catMap, ev.category);
               return (
                 <li key={ev.id} onClick={() => openEdit(ev)}>
-                  <span className="dot" style={{ background: CATEGORIES[ev.category]?.color }} />
+                  <span className="dot" style={{ background: cat.color }} />
                   <div>
                     <p className="u-title">{ev.title}</p>
                     <p className="u-meta">
@@ -324,6 +349,8 @@ export default function App() {
             </button>
           )}
 
+          <CategoryManager categories={categories} onChanged={reloadCategories} />
+
           <AccountPanel onSwitched={reload} />
 
           <ThemePicker />
@@ -341,6 +368,7 @@ export default function App() {
       {draft && (
         <EventModal
           draft={draft}
+          categories={categories}
           setDraft={setDraft}
           onSave={saveDraft}
           onDelete={draft.id ? deleteDraft : null}

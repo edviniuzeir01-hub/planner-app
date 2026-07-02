@@ -28,6 +28,16 @@ db.exec(`
     data      TEXT NOT NULL,                   -- JSON al obiectului PushSubscription
     createdAt INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS categories (
+    id        TEXT NOT NULL,                    -- id categorie (unic în cadrul calendarului)
+    spaceCode TEXT NOT NULL,
+    label     TEXT NOT NULL,
+    color     TEXT NOT NULL,
+    sortOrder INTEGER NOT NULL DEFAULT 0,
+    createdAt INTEGER NOT NULL,
+    PRIMARY KEY (spaceCode, id)
+  );
 `);
 
 // Migrație ușoară: adaugă coloana spaceCode dacă o bază de date veche nu o are.
@@ -42,6 +52,7 @@ ensureColumn("subscriptions", "spaceCode", "TEXT NOT NULL DEFAULT ''");
 
 db.exec(`CREATE INDEX IF NOT EXISTS idx_events_space ON events(spaceCode);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_subs_space ON subscriptions(spaceCode);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_cats_space ON categories(spaceCode);`);
 
 export interface EventRow {
   id: string;
@@ -61,6 +72,15 @@ export interface SubscriptionRow {
   endpoint: string;
   spaceCode: string;
   data: string;
+  createdAt: number;
+}
+
+export interface CategoryRow {
+  id: string;
+  spaceCode: string;
+  label: string;
+  color: string;
+  sortOrder: number;
   createdAt: number;
 }
 

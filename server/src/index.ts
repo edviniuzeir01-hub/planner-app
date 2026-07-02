@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import crypto from "crypto";
-import db, { EventRow } from "./db";
+import db, { EventRow, CategoryRow } from "./db";
 import { sendToSpace, isConfigured } from "./push";
 import { startScheduler } from "./scheduler";
 
@@ -108,6 +108,72 @@ app.put("/api/events/:id", requireSpace, (req, res) => {
 app.delete("/api/events/:id", requireSpace, (req, res) => {
   const space = (req as any).space as string;
   db.prepare("DELETE FROM events WHERE id = ? AND spaceCode = ?").run(req.params.id, space);
+  res.status(204).end();
+});
+
+/* ---------- categorii (per calendar, cu seed automat) ---------- */
+const DEFAULT_CATEGORIES = [
+  { id: "curs", label: "Curs", color: "#6FB8AE" },
+  { id: "proiect", label: "Proiect", color: "#D19A4A" },
+  { id: "personal", label: "Personal", color: "#C97B72" },
+  { id: "termen", label: "Termen limită", color: "#D6564A" },
+  { id: "altele", label: "Altele", color: "#9B8AC4" },
+];
+
+function seedIfEmpty(space: string) {
+  const count = db
+    .prepare("SELECT COUNT(*) AS n FROM categories WHERE spaceCode = ?")
+    .get(space) as { n: number };
+  if (count.n > 0) return;
+  const now = Date.now();
+  const insert = db.prepare(
+    "INSERT INTO categories (id, spaceCode, label, color, sortOrder, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  DEFAULT_CATEGORIES.forEach((c, i) => insert.run(c.id, space, c.label, c.color, i, now));
+}
+
+app.get("/api/categories", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  seedIfEmpty(space);
+  const rows = db
+    .prepare("SELECT * FROM categories WHERE spaceCode = ? ORDER BY sortOrder, createdAt")
+    .all(space) as CategoryRow[];
+  res.json(rows.map((r) => ({ id: r.id, label: r.label, color: r.color })));
+});
+
+app.post("/api/categories", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  const b = req.body || {};
+  if (!b.label || !b.color) return res.status(400).json({ error: "label și color obligatorii" });
+  const id = crypto.randomUUID();
+  const max = db
+    .prepare("SELECT COALESCE(MAX(sortOrder), -1) AS m FROM categories WHERE spaceCode = ?")
+    .get(space) as { m: number };
+  db.prepare(
+    "INSERT INTO categories (id, spaceCode, label, color, sortOrder, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(id, space, String(b.label), String(b.color), max.m + 1, Date.now());
+  res.status(201).json({ id, label: b.label, color: b.color });
+});
+
+app.put("/api/categories/:id", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  const b = req.body || {};
+  const existing = db
+    .prepare("SELECT * FROM categories WHERE spaceCode = ? AND id = ?")
+    .get(space, req.params.id) as CategoryRow | undefined;
+  if (!existing) return res.status(404).json({ error: "categorie inexistentă" });
+  db.prepare("UPDATE categories SET label = ?, color = ? WHERE spaceCode = ? AND id = ?").run(
+    b.label ?? existing.label,
+    b.color ?? existing.color,
+    space,
+    req.params.id
+  );
+  res.json({ id: req.params.id, label: b.label ?? existing.label, color: b.color ?? existing.color });
+});
+
+app.delete("/api/categories/:id", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  db.prepare("DELETE FROM categories WHERE spaceCode = ? AND id = ?").run(space, req.params.id);
   res.status(204).end();
 });
 

@@ -1,16 +1,17 @@
 import { Plus, ChevronLeft, ChevronRight, Clock, Bell } from "lucide-react";
-import { CATEGORIES, PlannerEvent } from "../types";
+import { CatMap, catOf, PlannerEvent } from "../types";
 
 interface Props {
   date: Date;
   events: PlannerEvent[];
+  catMap: CatMap;
   onPrev: () => void;
   onNext: () => void;
   onAdd: () => void;
   onEdit: (ev: PlannerEvent) => void;
 }
 
-export default function DayView({ date, events, onPrev, onNext, onAdd, onEdit }: Props) {
+export default function DayView({ date, events, catMap, onPrev, onNext, onAdd, onEdit }: Props) {
   return (
     <div className="day-view">
       <div className="day-view-head">
@@ -40,28 +41,31 @@ export default function DayView({ date, events, onPrev, onNext, onAdd, onEdit }:
       )}
 
       <ul className="day-list">
-        {events.map((ev) => (
-          <li
-            key={ev.id}
-            className="day-item"
-            style={{ ["--c" as string]: CATEGORIES[ev.category]?.color }}
-            onClick={() => onEdit(ev)}
-          >
-            <div className="day-item-time">
-              <Clock size={13} />
-              <span>
-                {ev.startTime || "—"}
-                {ev.endTime ? `–${ev.endTime}` : ""}
-              </span>
-            </div>
-            <div className="day-item-body">
-              <p className="day-item-title">{ev.title}</p>
-              {ev.notes && <p className="day-item-notes">{ev.notes}</p>}
-              <span className="day-item-cat">{CATEGORIES[ev.category]?.label}</span>
-            </div>
-            {ev.reminderMinutes ? <Bell size={14} className="bell-mini" /> : null}
-          </li>
-        ))}
+        {events.map((ev) => {
+          const cat = catOf(catMap, ev.category);
+          return (
+            <li
+              key={ev.id}
+              className="day-item"
+              style={{ ["--c" as string]: cat.color }}
+              onClick={() => onEdit(ev)}
+            >
+              <div className="day-item-time">
+                <Clock size={13} />
+                <span>
+                  {ev.startTime || "—"}
+                  {ev.endTime ? `–${ev.endTime}` : ""}
+                </span>
+              </div>
+              <div className="day-item-body">
+                <p className="day-item-title">{ev.title}</p>
+                {ev.notes && <p className="day-item-notes">{ev.notes}</p>}
+                <span className="day-item-cat">{cat.label}</span>
+              </div>
+              {ev.reminderMinutes ? <Bell size={14} className="bell-mini" /> : null}
+            </li>
+          );
+        })}
       </ul>
 
       {events.length > 0 && (

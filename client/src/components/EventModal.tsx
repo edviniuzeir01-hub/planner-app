@@ -1,15 +1,16 @@
 import { X, Trash2, Pencil, Check } from "lucide-react";
-import { CATEGORIES, CategoryKey, EventDraft, REMINDER_OPTIONS } from "../types";
+import { Category, EventDraft, REMINDER_OPTIONS } from "../types";
 
 interface Props {
   draft: EventDraft;
+  categories: Category[];
   setDraft: (d: EventDraft) => void;
   onSave: () => void;
   onDelete: (() => void) | null;
   onClose: () => void;
 }
 
-export default function EventModal({ draft, setDraft, onSave, onDelete, onClose }: Props) {
+export default function EventModal({ draft, categories, setDraft, onSave, onDelete, onClose }: Props) {
   const set =
     <K extends keyof EventDraft>(field: K) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
@@ -48,16 +49,19 @@ export default function EventModal({ draft, setDraft, onSave, onDelete, onClose 
         <div className="field">
           <span>Categorie</span>
           <div className="cat-select">
-            {(Object.keys(CATEGORIES) as CategoryKey[]).map((key) => (
+            {categories.length === 0 && (
+              <p className="cat-empty">Nicio categorie. Adaugă una din panoul „Categorii".</p>
+            )}
+            {categories.map((cat) => (
               <button
                 type="button"
-                key={key}
-                className={`cat-option ${draft.category === key ? "active" : ""}`}
-                style={{ ["--c" as string]: CATEGORIES[key].color }}
-                onClick={() => setDraft({ ...draft, category: key })}
+                key={cat.id}
+                className={`cat-option ${draft.category === cat.id ? "active" : ""}`}
+                style={{ ["--c" as string]: cat.color }}
+                onClick={() => setDraft({ ...draft, category: cat.id })}
               >
-                <span className="chip-dot" /> {CATEGORIES[key].label}
-                {draft.category === key && <Check size={12} />}
+                <span className="chip-dot" /> {cat.label}
+                {draft.category === cat.id && <Check size={12} />}
               </button>
             ))}
           </div>

@@ -4,7 +4,7 @@ export interface PlannerEvent {
   date: string; // YYYY-MM-DD
   startTime: string; // HH:MM
   endTime: string;
-  category: CategoryKey;
+  category: string; // id-ul categoriei (dinamic, per utilizator)
   notes: string;
   reminderMinutes: number | null;
   notified: boolean;
@@ -12,15 +12,21 @@ export interface PlannerEvent {
 
 export type EventDraft = Omit<PlannerEvent, "id" | "notified"> & { id: string | null };
 
-export type CategoryKey = "curs" | "proiect" | "personal" | "termen" | "altele";
+export interface Category {
+  id: string;
+  label: string;
+  color: string;
+}
 
-export const CATEGORIES: Record<CategoryKey, { label: string; color: string }> = {
-  curs: { label: "Curs", color: "#6FB8AE" },
-  proiect: { label: "Proiect", color: "#D19A4A" },
-  personal: { label: "Personal", color: "#C97B72" },
-  termen: { label: "Termen limită", color: "#D6564A" },
-  altele: { label: "Altele", color: "#9B8AC4" },
-};
+// Hartă id -> {label,color} pentru afișare rapidă în componente.
+export type CatMap = Record<string, { label: string; color: string }>;
+
+// Afișat când un eveniment are o categorie ștearsă între timp.
+export const FALLBACK_CATEGORY = { label: "Fără categorie", color: "#8A8A8A" };
+
+export function catOf(map: CatMap, id: string) {
+  return map[id] || FALLBACK_CATEGORY;
+}
 
 export const REMINDER_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Fără reminder" },
@@ -29,6 +35,12 @@ export const REMINDER_OPTIONS: { value: string; label: string }[] = [
   { value: "30", label: "cu 30 minute înainte" },
   { value: "60", label: "cu 1 oră înainte" },
   { value: "1440", label: "cu 1 zi înainte" },
+];
+
+// Culori sugerate pentru categorii noi (utilizatorul poate alege și altele).
+export const SUGGESTED_COLORS = [
+  "#6FB8AE", "#D19A4A", "#C97B72", "#D6564A", "#9B8AC4",
+  "#5BA3E0", "#E884B4", "#3FC9BE", "#E89A4A", "#8DA2C0",
 ];
 
 export const DAY_LABELS = ["Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du"];
