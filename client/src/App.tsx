@@ -14,6 +14,7 @@ import DayView from "./components/DayView";
 import AgendaView from "./components/AgendaView";
 import EventModal from "./components/EventModal";
 import AccountPanel from "./components/AccountPanel";
+import ThemePicker from "./components/ThemePicker";
 
 type ViewMode = "month" | "day" | "agenda";
 
@@ -324,6 +325,8 @@ export default function App() {
           )}
 
           <AccountPanel onSwitched={reload} />
+
+          <ThemePicker />
 
           <button className="fab-desktop" onClick={() => openAdd(selectedDate)}>
             <Plus size={16} /> Eveniment nou

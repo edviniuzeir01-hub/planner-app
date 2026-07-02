@@ -161,3 +161,57 @@ body { background: var(--bg); }
 .account-switch-box input:focus { border-color: var(--accent); }
 .account-switch-actions { display: flex; gap: 8px; }
 .account-switch-actions button { flex: 1; justify-content: center; }
+
+/* ---------------- teme de culoare ---------------- */
+/* verde e default (:root de mai sus). Restul suprascriu variabilele. */
+
+:root[data-theme="blue"] {
+  --bg: #0C1424; --surface: #14203A; --surface-2: #1B2B4A; --border: #2A3E63;
+  --text: #E8ECF5; --text-muted: #8B9BB5; --accent: #5BA3E0; --danger: #E0655A;
+}
+:root[data-theme="pink"] {
+  --bg: #1E0F1A; --surface: #2C1626; --surface-2: #3A1E33; --border: #4E2A44;
+  --text: #F3E8EF; --text-muted: #B58BA5; --accent: #E884B4; --danger: #E0655A;
+}
+:root[data-theme="red"] {
+  --bg: #1C0D0D; --surface: #2C1616; --surface-2: #3A1D1D; --border: #4E2A2A;
+  --text: #F3E9E9; --text-muted: #B58B8B; --accent: #E86A5E; --danger: #F08070;
+}
+:root[data-theme="purple"] {
+  --bg: #140E1F; --surface: #20172F; --surface-2: #2C1F40; --border: #3E2C58;
+  --text: #EDE8F5; --text-muted: #9E8BB5; --accent: #B18AE8; --danger: #E0655A;
+}
+:root[data-theme="orange"] {
+  --bg: #1E140A; --surface: #2C1F12; --surface-2: #3A2917; --border: #4E3822;
+  --text: #F3EDE4; --text-muted: #B5A08B; --accent: #E89A4A; --danger: #E0655A;
+}
+:root[data-theme="teal"] {
+  --bg: #08191A; --surface: #0F282A; --surface-2: #153638; --border: #22494C;
+  --text: #E4F2F1; --text-muted: #8BB5B2; --accent: #3FC9BE; --danger: #E0655A;
+}
+:root[data-theme="graphite"] {
+  --bg: #12151A; --surface: #1C2028; --surface-2: #262C36; --border: #353D4A;
+  --text: #E8EAEE; --text-muted: #9AA5B1; --accent: #8DA2C0; --danger: #E0655A;
+}
+:root[data-theme="light"] {
+  --bg: #F5F2E8; --surface: #FFFFFF; --surface-2: #EFEBDD; --border: #DAD4C2;
+  --text: #2A2A22; --text-muted: #6B6A5C; --accent: #C08A3A; --danger: #C0453A;
+}
+
+/* pe tema deschisă, textul de pe butoanele accent trebuie deschis, nu închis */
+:root[data-theme="light"] .view-tabs button.active,
+:root[data-theme="light"] .day-num.today,
+:root[data-theme="light"] .fab,
+:root[data-theme="light"] .fab-desktop,
+:root[data-theme="light"] .btn-primary { color: #FFFFFF; }
+:root[data-theme="light"] .modal-backdrop { background: rgba(40,38,30,.45); }
+
+/* theme picker */
+.theme-picker { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.theme-picker h2 { font-size: 13px; margin: 0 0 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.theme-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.theme-swatch { width: 30px; height: 30px; border-radius: 8px; border: 2px solid var(--border); cursor: pointer; position: relative; padding: 0; display: flex; align-items: center; justify-content: center; transition: transform .1s; }
+.theme-swatch:hover { transform: scale(1.08); }
+.theme-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.theme-swatch .swatch-dot { width: 9px; height: 9px; border-radius: 50%; }
+.theme-swatch .swatch-check { color: #fff; }
