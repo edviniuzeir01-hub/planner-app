@@ -27,9 +27,12 @@ export interface PushPayload {
   tag?: string;
 }
 
-export async function sendToAll(payload: PushPayload) {
+// Trimite doar către abonamentele calendarului (spaceCode) dat.
+export async function sendToSpace(spaceCode: string, payload: PushPayload) {
   if (!configured) return;
-  const subs = db.prepare("SELECT * FROM subscriptions").all() as SubscriptionRow[];
+  const subs = db
+    .prepare("SELECT * FROM subscriptions WHERE spaceCode = ?")
+    .all(spaceCode) as SubscriptionRow[];
   const json = JSON.stringify(payload);
 
   await Promise.all(

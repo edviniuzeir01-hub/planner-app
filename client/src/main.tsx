@@ -2,8 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { registerServiceWorker } from "./push";
+import { adoptCodeFromUrl } from "./space";
 import "./styles.css";
 
+adoptCodeFromUrl();
 registerServiceWorker();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

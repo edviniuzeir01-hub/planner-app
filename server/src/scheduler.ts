@@ -1,13 +1,12 @@
 import db, { EventRow } from "./db";
-import { sendToAll } from "./push";
+import { sendToSpace } from "./push";
 
-// Verifică ce evenimente au reminderul scadent și trimite notificarea.
+// Verifică ce evenimente au reminderul scadent și trimite notificarea
+// doar către abonamentele calendarului care deține evenimentul.
 async function tick() {
   const now = Date.now();
   const rows = db
-    .prepare(
-      "SELECT * FROM events WHERE notified = 0 AND reminderMinutes IS NOT NULL"
-    )
+    .prepare("SELECT * FROM events WHERE notified = 0 AND reminderMinutes IS NOT NULL")
     .all() as EventRow[];
 
   for (const ev of rows) {
@@ -16,10 +15,9 @@ async function tick() {
 
     const remindAt = start - ev.reminderMinutes! * 60_000;
 
-    // Fereastra de trimitere: de la momentul reminderului până la începutul evenimentului.
     if (now >= remindAt && now <= start) {
       const label = describeLead(ev.reminderMinutes!);
-      await sendToAll({
+      await sendToSpace(ev.spaceCode, {
         title: `⏰ ${ev.title}`,
         body: `Începe la ${ev.startTime || "?"}${label ? " (" + label + ")" : ""}`,
         eventId: ev.id,

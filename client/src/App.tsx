@@ -13,6 +13,7 @@ import MonthView from "./components/MonthView";
 import DayView from "./components/DayView";
 import AgendaView from "./components/AgendaView";
 import EventModal from "./components/EventModal";
+import AccountPanel from "./components/AccountPanel";
 
 type ViewMode = "month" | "day" | "agenda";
 
@@ -321,6 +322,8 @@ export default function App() {
               Trimite notificare de test
             </button>
           )}
+
+          <AccountPanel onSwitched={reload} />
 
           <button className="fab-desktop" onClick={() => openAdd(selectedDate)}>
             <Plus size={16} /> Eveniment nou

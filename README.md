@@ -97,7 +97,19 @@ client/src/
 ```
 
 ## 6. Idei de extins
-- Autentificare (acum e single-user; pentru multi-user leagă `subscriptions` de un user).
+- Autentificare cu parolă sau Google (acum e cod privat per persoană).
 - Evenimente recurente (zilnic/săptămânal).
 - Sincronizare cu Google Calendar (import iCal).
 - Categorii personalizabile din UI.
+
+## Calendare separate per utilizator
+
+Fiecare persoană care deschide aplicația primește automat un **cod privat** și
+un **calendar propriu**. Evenimentele și notificările sunt legate de acel cod,
+deci utilizatorii nu se văd și nu-și primesc notificările între ei.
+
+- Codul se salvează local pe dispozitiv (nu trebuie login).
+- Ca să deschizi **același** calendar pe alt dispozitiv (ex. laptop + telefon):
+  în panoul „Calendarul meu" apeși copiere → primești un link de forma
+  `.../#code=XXXX`. Îl deschizi pe al doilea dispozitiv și adoptă automat codul.
+- „Introdu alt cod" îți permite să treci pe alt calendar (al tău, de pe alt device).

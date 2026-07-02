@@ -6,7 +6,7 @@ import cors from "cors";
 import path from "path";
 import crypto from "crypto";
 import db, { EventRow } from "./db";
-import { sendToAll, isConfigured } from "./push";
+import { sendToSpace, isConfigured } from "./push";
 import { startScheduler } from "./scheduler";
 
 const app = express();
@@ -14,6 +14,20 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = Number(process.env.PORT) || 4000;
+
+// Codul de calendar (identitatea utilizatorului) vine din header-ul X-Space.
+function spaceOf(req: express.Request): string | null {
+  const c = req.header("X-Space");
+  return c && c.trim().length >= 8 ? c.trim() : null;
+}
+
+// Middleware care cere un cod valid pentru rutele de date.
+function requireSpace(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const code = spaceOf(req);
+  if (!code) return res.status(400).json({ error: "cod de calendar lipsă" });
+  (req as any).space = code;
+  next();
+}
 
 /* ---------- config public (cheia VAPID pentru client) ---------- */
 app.get("/api/config", (_req, res) => {
@@ -23,23 +37,28 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
-/* ---------- events ---------- */
-app.get("/api/events", (_req, res) => {
-  const rows = db.prepare("SELECT * FROM events ORDER BY date, startTime").all() as EventRow[];
+/* ---------- events (toate filtrate pe calendarul curent) ---------- */
+app.get("/api/events", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  const rows = db
+    .prepare("SELECT * FROM events WHERE spaceCode = ? ORDER BY date, startTime")
+    .all(space) as EventRow[];
   res.json(rows.map(toClient));
 });
 
-app.post("/api/events", (req, res) => {
+app.post("/api/events", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
   const b = req.body || {};
   if (!b.title || !b.date) {
     return res.status(400).json({ error: "title și date sunt obligatorii" });
   }
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO events (id, title, date, startTime, endTime, category, notes, reminderMinutes, notified, createdAt)
-     VALUES (@id, @title, @date, @startTime, @endTime, @category, @notes, @reminderMinutes, 0, @createdAt)`
+    `INSERT INTO events (id, spaceCode, title, date, startTime, endTime, category, notes, reminderMinutes, notified, createdAt)
+     VALUES (@id, @spaceCode, @title, @date, @startTime, @endTime, @category, @notes, @reminderMinutes, 0, @createdAt)`
   ).run({
     id,
+    spaceCode: space,
     title: String(b.title),
     date: String(b.date),
     startTime: b.startTime || null,
@@ -53,14 +72,14 @@ app.post("/api/events", (req, res) => {
   res.status(201).json(toClient(row));
 });
 
-app.put("/api/events/:id", (req, res) => {
-  const existing = db.prepare("SELECT * FROM events WHERE id = ?").get(req.params.id) as
-    | EventRow
-    | undefined;
+app.put("/api/events/:id", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  const existing = db
+    .prepare("SELECT * FROM events WHERE id = ? AND spaceCode = ?")
+    .get(req.params.id, space) as EventRow | undefined;
   if (!existing) return res.status(404).json({ error: "eveniment inexistent" });
 
   const b = req.body || {};
-  // Dacă s-a schimbat momentul, resetăm flag-ul notified ca reminderul să se retrimită.
   const timingChanged =
     b.date !== existing.date ||
     (b.startTime || null) !== existing.startTime ||
@@ -69,9 +88,10 @@ app.put("/api/events/:id", (req, res) => {
   db.prepare(
     `UPDATE events SET title=@title, date=@date, startTime=@startTime, endTime=@endTime,
        category=@category, notes=@notes, reminderMinutes=@reminderMinutes, notified=@notified
-     WHERE id=@id`
+     WHERE id=@id AND spaceCode=@spaceCode`
   ).run({
     id: req.params.id,
+    spaceCode: space,
     title: b.title ?? existing.title,
     date: b.date ?? existing.date,
     startTime: b.startTime ?? existing.startTime,
@@ -85,31 +105,34 @@ app.put("/api/events/:id", (req, res) => {
   res.json(toClient(row));
 });
 
-app.delete("/api/events/:id", (req, res) => {
-  db.prepare("DELETE FROM events WHERE id = ?").run(req.params.id);
+app.delete("/api/events/:id", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
+  db.prepare("DELETE FROM events WHERE id = ? AND spaceCode = ?").run(req.params.id, space);
   res.status(204).end();
 });
 
-/* ---------- push subscriptions ---------- */
-app.post("/api/subscribe", (req, res) => {
+/* ---------- push subscriptions (legate de calendar) ---------- */
+app.post("/api/subscribe", requireSpace, (req, res) => {
+  const space = (req as any).space as string;
   const sub = req.body;
   if (!sub || !sub.endpoint) return res.status(400).json({ error: "subscription invalid" });
   db.prepare(
-    `INSERT INTO subscriptions (endpoint, data, createdAt) VALUES (?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET data = excluded.data`
-  ).run(sub.endpoint, JSON.stringify(sub), Date.now());
+    `INSERT INTO subscriptions (endpoint, spaceCode, data, createdAt) VALUES (?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET data = excluded.data, spaceCode = excluded.spaceCode`
+  ).run(sub.endpoint, space, JSON.stringify(sub), Date.now());
   res.status(201).json({ ok: true });
 });
 
-app.post("/api/unsubscribe", (req, res) => {
+app.post("/api/unsubscribe", requireSpace, (req, res) => {
   const { endpoint } = req.body || {};
   if (endpoint) db.prepare("DELETE FROM subscriptions WHERE endpoint = ?").run(endpoint);
   res.json({ ok: true });
 });
 
-// Notificare de test — utilă ca să verifici că push-ul merge.
-app.post("/api/test-push", async (_req, res) => {
-  await sendToAll({
+// Notificare de test — doar către calendarul curent.
+app.post("/api/test-push", requireSpace, async (req, res) => {
+  const space = (req as any).space as string;
+  await sendToSpace(space, {
     title: "🔔 Test reminder",
     body: "Notificările funcționează. Ești gata de treabă!",
     eventId: "test",
