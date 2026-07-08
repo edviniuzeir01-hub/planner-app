@@ -12,3 +12,7 @@ services:
         sync: false
       - key: VAPID_SUBJECT
         value: mailto:tu@example.com
+      - key: CRON_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false

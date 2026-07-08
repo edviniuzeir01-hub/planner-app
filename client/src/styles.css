@@ -245,3 +245,7 @@ body { background: var(--bg); }
 /* agenda color dot */
 .agenda-cat-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; margin-left: auto; }
 .agenda-group li .bell-mini { margin-left: 6px; }
+
+/* full code display */
+.account-code .full-code { font-size: 10px; word-break: break-all; white-space: normal; }
+.account-switch + .account-switch { margin-top: 6px; }

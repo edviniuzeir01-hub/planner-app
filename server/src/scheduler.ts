@@ -1,21 +1,26 @@
-import db, { EventRow } from "./db";
+import { pool, mapEvent } from "./db";
 import { sendToSpace } from "./push";
 
-// Verifică ce evenimente au reminderul scadent și trimite notificarea
-// doar către abonamentele calendarului care deține evenimentul.
-async function tick() {
-  const now = Date.now();
-  const rows = db
-    .prepare("SELECT * FROM events WHERE notified = 0 AND reminderMinutes IS NOT NULL")
-    .all() as EventRow[];
+// Toleranță: trimitem reminderul dacă a devenit scadent și evenimentul nu a
+// început cu mai mult de GRACE în urmă. Astfel un cron la 5 min nu ratează nimic.
+const GRACE_MS = 10 * 60_000;
 
+// Verifică reminderele scadente și trimite notificările. Întoarce câte a trimis.
+export async function runReminders(): Promise<number> {
+  const now = Date.now();
+  const res = await pool.query(
+    "SELECT * FROM events WHERE notified = FALSE AND reminder_minutes IS NOT NULL"
+  );
+  const rows = res.rows.map(mapEvent);
+
+  let sent = 0;
   for (const ev of rows) {
     const start = new Date(`${ev.date}T${ev.startTime || "00:00"}:00`).getTime();
     if (Number.isNaN(start)) continue;
 
     const remindAt = start - ev.reminderMinutes! * 60_000;
 
-    if (now >= remindAt && now <= start) {
+    if (now >= remindAt && now <= start + GRACE_MS) {
       const label = describeLead(ev.reminderMinutes!);
       await sendToSpace(ev.spaceCode, {
         title: `⏰ ${ev.title}`,
@@ -23,10 +28,12 @@ async function tick() {
         eventId: ev.id,
         tag: ev.id,
       });
-      db.prepare("UPDATE events SET notified = 1 WHERE id = ?").run(ev.id);
-      console.log(`[scheduler] reminder trimis: ${ev.title}`);
+      await pool.query("UPDATE events SET notified = TRUE WHERE id = $1", [ev.id]);
+      console.log(`[reminders] trimis: ${ev.title}`);
+      sent++;
     }
   }
+  return sent;
 }
 
 function describeLead(mins: number): string {
@@ -35,8 +42,10 @@ function describeLead(mins: number): string {
   return `cu ${mins} min înainte`;
 }
 
+// Scheduler intern — util cât serverul e oricum treaz. Reminderele „de încredere"
+// vin însă de la cron-ul extern care apelează /api/run-reminders.
 export function startScheduler() {
-  tick().catch(console.error);
-  setInterval(() => tick().catch(console.error), 30_000);
-  console.log("[scheduler] pornit (verifică la fiecare 30s)");
+  runReminders().catch(console.error);
+  setInterval(() => runReminders().catch(console.error), 30_000);
+  console.log("[scheduler] pornit (verifică la fiecare 30s cât e treaz)");
 }

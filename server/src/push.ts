@@ -1,5 +1,5 @@
 import webpush from "web-push";
-import db, { SubscriptionRow } from "./db";
+import { pool, mapSubscription } from "./db";
 
 const publicKey = process.env.VAPID_PUBLIC_KEY || "";
 const privateKey = process.env.VAPID_PRIVATE_KEY || "";
@@ -30,9 +30,8 @@ export interface PushPayload {
 // Trimite doar către abonamentele calendarului (spaceCode) dat.
 export async function sendToSpace(spaceCode: string, payload: PushPayload) {
   if (!configured) return;
-  const subs = db
-    .prepare("SELECT * FROM subscriptions WHERE spaceCode = ?")
-    .all(spaceCode) as SubscriptionRow[];
+  const res = await pool.query("SELECT * FROM subscriptions WHERE space_code = $1", [spaceCode]);
+  const subs = res.rows.map(mapSubscription);
   const json = JSON.stringify(payload);
 
   await Promise.all(
@@ -42,7 +41,7 @@ export async function sendToSpace(spaceCode: string, payload: PushPayload) {
       } catch (err: any) {
         // 404/410 = subscription expirat -> îl ștergem
         if (err && (err.statusCode === 404 || err.statusCode === 410)) {
-          db.prepare("DELETE FROM subscriptions WHERE endpoint = ?").run(row.endpoint);
+          await pool.query("DELETE FROM subscriptions WHERE endpoint = $1", [row.endpoint]);
         } else {
           console.error("[push] eroare la trimitere:", err?.statusCode || err);
         }

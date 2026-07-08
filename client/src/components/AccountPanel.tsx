@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, KeyRound, RefreshCw } from "lucide-react";
+import { Copy, Check, KeyRound, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { getSpace, setSpace, shareLink } from "../space";
 
 interface Props {
@@ -7,16 +7,27 @@ interface Props {
 }
 
 export default function AccountPanel({ onSwitched }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"link" | "code" | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [showFull, setShowFull] = useState(false);
   const [input, setInput] = useState("");
   const code = getSpace();
 
-  const copy = async () => {
+  const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareLink());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopied("link");
+      setTimeout(() => setCopied(null), 2500);
+    } catch {
+      /* clipboard indisponibil */
+    }
+  };
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied("code");
+      setTimeout(() => setCopied(null), 2500);
     } catch {
       /* clipboard indisponibil */
     }
@@ -35,27 +46,37 @@ export default function AccountPanel({ onSwitched }: Props) {
     <div className="account">
       <h2>Calendarul meu</h2>
       <p className="account-note">
-        Codul tău privat. Copiază linkul ca să deschizi <b>același</b> calendar și pe alt
-        dispozitiv (ex. telefon).
+        Codul tău privat = cheia calendarului tău. <b>Salvează-l undeva sigur</b> (notițe,
+        email către tine). Dacă telefonul șterge datele aplicației, cu acest cod îți
+        recuperezi calendarul cu tot ce e în el.
       </p>
 
       <div className="account-code">
         <KeyRound size={13} />
-        <span title={code}>{code.slice(0, 8)}…{code.slice(-4)}</span>
-        <button onClick={copy} aria-label="Copiază linkul">
-          {copied ? <Check size={13} /> : <Copy size={13} />}
+        <span title={code} className={showFull ? "full-code" : ""}>
+          {showFull ? code : `${code.slice(0, 8)}…${code.slice(-4)}`}
+        </span>
+        <button onClick={() => setShowFull((v) => !v)} aria-label={showFull ? "Ascunde codul" : "Arată codul complet"}>
+          {showFull ? <EyeOff size={13} /> : <Eye size={13} />}
+        </button>
+        <button onClick={copyCode} aria-label="Copiază codul">
+          {copied === "code" ? <Check size={13} /> : <Copy size={13} />}
         </button>
       </div>
-      {copied && <p className="account-copied">Link copiat — trimite-l pe alt dispozitiv de-al tău.</p>}
+      {copied === "code" && <p className="account-copied">Cod copiat — salvează-l undeva sigur.</p>}
+
+      <button className="account-switch" onClick={copyLink}>
+        <Copy size={12} /> {copied === "link" ? "Link copiat!" : "Copiază link pentru alt dispozitiv"}
+      </button>
 
       {!switching ? (
         <button className="account-switch" onClick={() => setSwitching(true)}>
-          <RefreshCw size={12} /> Introdu alt cod
+          <RefreshCw size={12} /> Recuperează cu un cod
         </button>
       ) : (
         <div className="account-switch-box">
           <input
-            placeholder="lipește codul aici"
+            placeholder="lipește codul salvat aici"
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />

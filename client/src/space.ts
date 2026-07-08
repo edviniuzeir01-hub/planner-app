@@ -1,3 +1,5 @@
+// Gestionează codul privat al calendarului (identitatea utilizatorului).
+// E stocat local pe dispozitiv. Fiecare persoană are propriul cod => propriul calendar.
 
 const KEY = "planner:space";
 

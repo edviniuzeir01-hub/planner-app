@@ -5,9 +5,9 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import crypto from "crypto";
-import db, { EventRow, CategoryRow } from "./db";
+import { pool, initDb, mapEvent, mapCategory, EventRow } from "./db";
 import { sendToSpace, isConfigured } from "./push";
-import { startScheduler } from "./scheduler";
+import { startScheduler, runReminders } from "./scheduler";
 
 const app = express();
 app.use(cors());
@@ -21,7 +21,6 @@ function spaceOf(req: express.Request): string | null {
   return c && c.trim().length >= 8 ? c.trim() : null;
 }
 
-// Middleware care cere un cod valid pentru rutele de date.
 function requireSpace(req: express.Request, res: express.Response, next: express.NextFunction) {
   const code = spaceOf(req);
   if (!code) return res.status(400).json({ error: "cod de calendar lipsă" });
@@ -29,7 +28,16 @@ function requireSpace(req: express.Request, res: express.Response, next: express
   next();
 }
 
-/* ---------- config public (cheia VAPID pentru client) ---------- */
+// Wrapper ca rutele async să trimită erorile la handlerul global, nu să crape.
+const wrap =
+  (fn: (req: express.Request, res: express.Response) => Promise<any>) =>
+  (req: express.Request, res: express.Response) =>
+    fn(req, res).catch((err) => {
+      console.error("[api]", err);
+      if (!res.headersSent) res.status(500).json({ error: "eroare internă" });
+    });
+
+/* ---------- config public ---------- */
 app.get("/api/config", (_req, res) => {
   res.json({
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || null,
@@ -37,79 +45,103 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
-/* ---------- events (toate filtrate pe calendarul curent) ---------- */
-app.get("/api/events", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const rows = db
-    .prepare("SELECT * FROM events WHERE spaceCode = ? ORDER BY date, startTime")
-    .all(space) as EventRow[];
-  res.json(rows.map(toClient));
-});
+/* ---------- events ---------- */
+app.get(
+  "/api/events",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const r = await pool.query(
+      "SELECT * FROM events WHERE space_code = $1 ORDER BY date, start_time",
+      [space]
+    );
+    res.json(r.rows.map(mapEvent).map(toClient));
+  })
+);
 
-app.post("/api/events", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const b = req.body || {};
-  if (!b.title || !b.date) {
-    return res.status(400).json({ error: "title și date sunt obligatorii" });
-  }
-  const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO events (id, spaceCode, title, date, startTime, endTime, category, notes, reminderMinutes, notified, createdAt)
-     VALUES (@id, @spaceCode, @title, @date, @startTime, @endTime, @category, @notes, @reminderMinutes, 0, @createdAt)`
-  ).run({
-    id,
-    spaceCode: space,
-    title: String(b.title),
-    date: String(b.date),
-    startTime: b.startTime || null,
-    endTime: b.endTime || null,
-    category: b.category || "altele",
-    notes: b.notes || null,
-    reminderMinutes: b.reminderMinutes ?? null,
-    createdAt: Date.now(),
-  });
-  const row = db.prepare("SELECT * FROM events WHERE id = ?").get(id) as EventRow;
-  res.status(201).json(toClient(row));
-});
+app.post(
+  "/api/events",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const b = req.body || {};
+    if (!b.title || !b.date) {
+      return res.status(400).json({ error: "title și date sunt obligatorii" });
+    }
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO events (id, space_code, title, date, start_time, end_time, category, notes, reminder_minutes, notified, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE,$10)`,
+      [
+        id,
+        space,
+        String(b.title),
+        String(b.date),
+        b.startTime || null,
+        b.endTime || null,
+        b.category || "altele",
+        b.notes || null,
+        b.reminderMinutes ?? null,
+        Date.now(),
+      ]
+    );
+    const r = await pool.query("SELECT * FROM events WHERE id = $1", [id]);
+    res.status(201).json(toClient(mapEvent(r.rows[0])));
+  })
+);
 
-app.put("/api/events/:id", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const existing = db
-    .prepare("SELECT * FROM events WHERE id = ? AND spaceCode = ?")
-    .get(req.params.id, space) as EventRow | undefined;
-  if (!existing) return res.status(404).json({ error: "eveniment inexistent" });
+app.put(
+  "/api/events/:id",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const er = await pool.query("SELECT * FROM events WHERE id = $1 AND space_code = $2", [
+      req.params.id,
+      space,
+    ]);
+    if (er.rows.length === 0) return res.status(404).json({ error: "eveniment inexistent" });
+    const existing = mapEvent(er.rows[0]);
 
-  const b = req.body || {};
-  const timingChanged =
-    b.date !== existing.date ||
-    (b.startTime || null) !== existing.startTime ||
-    (b.reminderMinutes ?? null) !== existing.reminderMinutes;
+    const b = req.body || {};
+    const timingChanged =
+      b.date !== existing.date ||
+      (b.startTime || null) !== existing.startTime ||
+      (b.reminderMinutes ?? null) !== existing.reminderMinutes;
 
-  db.prepare(
-    `UPDATE events SET title=@title, date=@date, startTime=@startTime, endTime=@endTime,
-       category=@category, notes=@notes, reminderMinutes=@reminderMinutes, notified=@notified
-     WHERE id=@id AND spaceCode=@spaceCode`
-  ).run({
-    id: req.params.id,
-    spaceCode: space,
-    title: b.title ?? existing.title,
-    date: b.date ?? existing.date,
-    startTime: b.startTime ?? existing.startTime,
-    endTime: b.endTime ?? existing.endTime,
-    category: b.category ?? existing.category,
-    notes: b.notes ?? existing.notes,
-    reminderMinutes: b.reminderMinutes ?? existing.reminderMinutes,
-    notified: timingChanged ? 0 : existing.notified,
-  });
-  const row = db.prepare("SELECT * FROM events WHERE id = ?").get(req.params.id) as EventRow;
-  res.json(toClient(row));
-});
+    await pool.query(
+      `UPDATE events SET title=$1, date=$2, start_time=$3, end_time=$4,
+         category=$5, notes=$6, reminder_minutes=$7, notified=$8
+       WHERE id=$9 AND space_code=$10`,
+      [
+        b.title ?? existing.title,
+        b.date ?? existing.date,
+        b.startTime ?? existing.startTime,
+        b.endTime ?? existing.endTime,
+        b.category ?? existing.category,
+        b.notes ?? existing.notes,
+        b.reminderMinutes ?? existing.reminderMinutes,
+        timingChanged ? false : existing.notified,
+        req.params.id,
+        space,
+      ]
+    );
+    const r = await pool.query("SELECT * FROM events WHERE id = $1", [req.params.id]);
+    res.json(toClient(mapEvent(r.rows[0])));
+  })
+);
 
-app.delete("/api/events/:id", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  db.prepare("DELETE FROM events WHERE id = ? AND spaceCode = ?").run(req.params.id, space);
-  res.status(204).end();
-});
+app.delete(
+  "/api/events/:id",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    await pool.query("DELETE FROM events WHERE id = $1 AND space_code = $2", [
+      req.params.id,
+      space,
+    ]);
+    res.status(204).end();
+  })
+);
 
 /* ---------- categorii (per calendar, cu seed automat) ---------- */
 const DEFAULT_CATEGORIES = [
@@ -120,91 +152,143 @@ const DEFAULT_CATEGORIES = [
   { id: "altele", label: "Altele", color: "#9B8AC4" },
 ];
 
-function seedIfEmpty(space: string) {
-  const count = db
-    .prepare("SELECT COUNT(*) AS n FROM categories WHERE spaceCode = ?")
-    .get(space) as { n: number };
-  if (count.n > 0) return;
+async function seedIfEmpty(space: string) {
+  const c = await pool.query("SELECT COUNT(*)::int AS n FROM categories WHERE space_code = $1", [
+    space,
+  ]);
+  if (c.rows[0].n > 0) return;
   const now = Date.now();
-  const insert = db.prepare(
-    "INSERT INTO categories (id, spaceCode, label, color, sortOrder, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
-  );
-  DEFAULT_CATEGORIES.forEach((c, i) => insert.run(c.id, space, c.label, c.color, i, now));
+  for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
+    const cat = DEFAULT_CATEGORIES[i];
+    await pool.query(
+      "INSERT INTO categories (id, space_code, label, color, sort_order, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      [cat.id, space, cat.label, cat.color, i, now]
+    );
+  }
 }
 
-app.get("/api/categories", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  seedIfEmpty(space);
-  const rows = db
-    .prepare("SELECT * FROM categories WHERE spaceCode = ? ORDER BY sortOrder, createdAt")
-    .all(space) as CategoryRow[];
-  res.json(rows.map((r) => ({ id: r.id, label: r.label, color: r.color })));
-});
+app.get(
+  "/api/categories",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    await seedIfEmpty(space);
+    const r = await pool.query(
+      "SELECT * FROM categories WHERE space_code = $1 ORDER BY sort_order, created_at",
+      [space]
+    );
+    res.json(r.rows.map(mapCategory).map((c) => ({ id: c.id, label: c.label, color: c.color })));
+  })
+);
 
-app.post("/api/categories", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const b = req.body || {};
-  if (!b.label || !b.color) return res.status(400).json({ error: "label și color obligatorii" });
-  const id = crypto.randomUUID();
-  const max = db
-    .prepare("SELECT COALESCE(MAX(sortOrder), -1) AS m FROM categories WHERE spaceCode = ?")
-    .get(space) as { m: number };
-  db.prepare(
-    "INSERT INTO categories (id, spaceCode, label, color, sortOrder, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(id, space, String(b.label), String(b.color), max.m + 1, Date.now());
-  res.status(201).json({ id, label: b.label, color: b.color });
-});
+app.post(
+  "/api/categories",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const b = req.body || {};
+    if (!b.label || !b.color) return res.status(400).json({ error: "label și color obligatorii" });
+    const id = crypto.randomUUID();
+    const m = await pool.query(
+      "SELECT COALESCE(MAX(sort_order), -1)::int AS m FROM categories WHERE space_code = $1",
+      [space]
+    );
+    await pool.query(
+      "INSERT INTO categories (id, space_code, label, color, sort_order, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, space, String(b.label), String(b.color), m.rows[0].m + 1, Date.now()]
+    );
+    res.status(201).json({ id, label: b.label, color: b.color });
+  })
+);
 
-app.put("/api/categories/:id", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const b = req.body || {};
-  const existing = db
-    .prepare("SELECT * FROM categories WHERE spaceCode = ? AND id = ?")
-    .get(space, req.params.id) as CategoryRow | undefined;
-  if (!existing) return res.status(404).json({ error: "categorie inexistentă" });
-  db.prepare("UPDATE categories SET label = ?, color = ? WHERE spaceCode = ? AND id = ?").run(
-    b.label ?? existing.label,
-    b.color ?? existing.color,
-    space,
-    req.params.id
-  );
-  res.json({ id: req.params.id, label: b.label ?? existing.label, color: b.color ?? existing.color });
-});
+app.put(
+  "/api/categories/:id",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const b = req.body || {};
+    const er = await pool.query("SELECT * FROM categories WHERE space_code = $1 AND id = $2", [
+      space,
+      req.params.id,
+    ]);
+    if (er.rows.length === 0) return res.status(404).json({ error: "categorie inexistentă" });
+    const existing = mapCategory(er.rows[0]);
+    await pool.query("UPDATE categories SET label = $1, color = $2 WHERE space_code = $3 AND id = $4", [
+      b.label ?? existing.label,
+      b.color ?? existing.color,
+      space,
+      req.params.id,
+    ]);
+    res.json({ id: req.params.id, label: b.label ?? existing.label, color: b.color ?? existing.color });
+  })
+);
 
-app.delete("/api/categories/:id", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  db.prepare("DELETE FROM categories WHERE spaceCode = ? AND id = ?").run(space, req.params.id);
-  res.status(204).end();
-});
+app.delete(
+  "/api/categories/:id",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    await pool.query("DELETE FROM categories WHERE space_code = $1 AND id = $2", [
+      space,
+      req.params.id,
+    ]);
+    res.status(204).end();
+  })
+);
 
-/* ---------- push subscriptions (legate de calendar) ---------- */
-app.post("/api/subscribe", requireSpace, (req, res) => {
-  const space = (req as any).space as string;
-  const sub = req.body;
-  if (!sub || !sub.endpoint) return res.status(400).json({ error: "subscription invalid" });
-  db.prepare(
-    `INSERT INTO subscriptions (endpoint, spaceCode, data, createdAt) VALUES (?, ?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET data = excluded.data, spaceCode = excluded.spaceCode`
-  ).run(sub.endpoint, space, JSON.stringify(sub), Date.now());
-  res.status(201).json({ ok: true });
-});
+/* ---------- push subscriptions ---------- */
+app.post(
+  "/api/subscribe",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    const sub = req.body;
+    if (!sub || !sub.endpoint) return res.status(400).json({ error: "subscription invalid" });
+    await pool.query(
+      `INSERT INTO subscriptions (endpoint, space_code, data, created_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (endpoint) DO UPDATE SET data = EXCLUDED.data, space_code = EXCLUDED.space_code`,
+      [sub.endpoint, space, JSON.stringify(sub), Date.now()]
+    );
+    res.status(201).json({ ok: true });
+  })
+);
 
-app.post("/api/unsubscribe", requireSpace, (req, res) => {
-  const { endpoint } = req.body || {};
-  if (endpoint) db.prepare("DELETE FROM subscriptions WHERE endpoint = ?").run(endpoint);
-  res.json({ ok: true });
-});
+app.post(
+  "/api/unsubscribe",
+  requireSpace,
+  wrap(async (req, res) => {
+    const { endpoint } = req.body || {};
+    if (endpoint) await pool.query("DELETE FROM subscriptions WHERE endpoint = $1", [endpoint]);
+    res.json({ ok: true });
+  })
+);
 
-// Notificare de test — doar către calendarul curent.
-app.post("/api/test-push", requireSpace, async (req, res) => {
-  const space = (req as any).space as string;
-  await sendToSpace(space, {
-    title: "🔔 Test reminder",
-    body: "Notificările funcționează. Ești gata de treabă!",
-    eventId: "test",
-  });
-  res.json({ ok: true });
+app.post(
+  "/api/test-push",
+  requireSpace,
+  wrap(async (req, res) => {
+    const space = (req as any).space as string;
+    await sendToSpace(space, {
+      title: "🔔 Test reminder",
+      body: "Notificările funcționează. Ești gata de treabă!",
+      eventId: "test",
+    });
+    res.json({ ok: true });
+  })
+);
+
+/* ---------- endpoint apelat de cron-ul extern (cron-job.org) ---------- */
+const handleRunReminders = wrap(async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const provided = req.query.key || req.header("X-Cron-Key");
+    if (provided !== secret) return res.status(401).json({ error: "cheie invalidă" });
+  }
+  const sent = await runReminders();
+  res.json({ ok: true, sent });
 });
+app.get("/api/run-reminders", handleRunReminders);
+app.post("/api/run-reminders", handleRunReminders);
 
 /* ---------- servește build-ul de client (producție) ---------- */
 const clientDist = path.join(__dirname, "..", "..", "client", "dist");
@@ -229,7 +313,14 @@ function toClient(r: EventRow) {
   };
 }
 
-app.listen(PORT, () => {
-  console.log(`[server] pornit pe http://localhost:${PORT}`);
-  startScheduler();
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`[server] pornit pe http://localhost:${PORT}`);
+      startScheduler();
+    });
+  })
+  .catch((err) => {
+    console.error("[db] inițializarea a eșuat:", err);
+    process.exit(1);
+  });
