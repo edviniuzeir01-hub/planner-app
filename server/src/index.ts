@@ -70,18 +70,23 @@ app.post(
     }
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO events (id, space_code, title, date, start_time, end_time, category, notes, reminder_minutes, notified, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE,$10)`,
+      `INSERT INTO events (id, space_code, title, date, start_time, end_time, category, notes,
+                           reminder_minutes, notified, all_day, priority, recurrence, recurrence_end, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE,$10,$11,$12,$13,$14)`,
       [
         id,
         space,
         String(b.title),
         String(b.date),
-        b.startTime || null,
-        b.endTime || null,
-        b.category || "altele",
+        b.allDay ? null : b.startTime || null,
+        b.allDay ? null : b.endTime || null,
+        b.category || "personal",
         b.notes || null,
         b.reminderMinutes ?? null,
+        !!b.allDay,
+        b.priority || "normal",
+        b.recurrence || "none",
+        b.recurrenceEnd || null,
         Date.now(),
       ]
     );
@@ -108,19 +113,26 @@ app.put(
       (b.startTime || null) !== existing.startTime ||
       (b.reminderMinutes ?? null) !== existing.reminderMinutes;
 
+    const allDay = b.allDay ?? existing.allDay;
     await pool.query(
       `UPDATE events SET title=$1, date=$2, start_time=$3, end_time=$4,
-         category=$5, notes=$6, reminder_minutes=$7, notified=$8
-       WHERE id=$9 AND space_code=$10`,
+         category=$5, notes=$6, reminder_minutes=$7, notified=$8,
+         all_day=$9, priority=$10, recurrence=$11, recurrence_end=$12, last_notified=$13
+       WHERE id=$14 AND space_code=$15`,
       [
         b.title ?? existing.title,
         b.date ?? existing.date,
-        b.startTime ?? existing.startTime,
-        b.endTime ?? existing.endTime,
+        allDay ? null : b.startTime ?? existing.startTime,
+        allDay ? null : b.endTime ?? existing.endTime,
         b.category ?? existing.category,
         b.notes ?? existing.notes,
         b.reminderMinutes ?? existing.reminderMinutes,
         timingChanged ? false : existing.notified,
+        allDay,
+        b.priority ?? existing.priority,
+        b.recurrence ?? existing.recurrence,
+        b.recurrenceEnd ?? existing.recurrenceEnd,
+        timingChanged ? null : existing.lastNotified,
         req.params.id,
         space,
       ]
@@ -145,11 +157,11 @@ app.delete(
 
 /* ---------- categorii (per calendar, cu seed automat) ---------- */
 const DEFAULT_CATEGORIES = [
-  { id: "curs", label: "Curs", color: "#6FB8AE" },
-  { id: "proiect", label: "Proiect", color: "#D19A4A" },
-  { id: "personal", label: "Personal", color: "#C97B72" },
-  { id: "termen", label: "Termen limită", color: "#D6564A" },
-  { id: "altele", label: "Altele", color: "#9B8AC4" },
+  { id: "work", label: "Muncă", color: "#5BA3E0" },
+  { id: "personal", label: "Personal", color: "#6FB8AE" },
+  { id: "health", label: "Sănătate", color: "#7FC08A" },
+  { id: "social", label: "Social", color: "#E884B4" },
+  { id: "important", label: "Important", color: "#D6564A" },
 ];
 
 async function seedIfEmpty(space: string) {
@@ -310,6 +322,10 @@ function toClient(r: EventRow) {
     notes: r.notes || "",
     reminderMinutes: r.reminderMinutes,
     notified: !!r.notified,
+    allDay: !!r.allDay,
+    priority: r.priority || "normal",
+    recurrence: r.recurrence || "none",
+    recurrenceEnd: r.recurrenceEnd || "",
   };
 }
 

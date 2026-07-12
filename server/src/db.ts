@@ -1,7 +1,6 @@
 import { Pool } from "pg";
 
-// DATABASE_URL vine de la Neon (sau alt Postgres). Ex:
-//   postgresql://user:pass@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
+// DATABASE_URL vine de la Neon (sau alt Postgres).
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
   console.error(
@@ -12,13 +11,18 @@ if (!connectionString) {
 
 export const pool = new Pool({
   connectionString,
-  ssl: connectionString && !connectionString.includes("localhost")
-    ? { rejectUnauthorized: false }
-    : undefined,
+  ssl:
+    connectionString && !connectionString.includes("localhost")
+      ? { rejectUnauthorized: false }
+      : undefined,
   max: 5,
 });
 
-// Creează tabelele dacă nu există. Rulează o dată la pornirea serverului.
+// Adaugă o coloană dacă nu există (migrație sigură pentru baze existente).
+async function addColumn(table: string, col: string, def: string) {
+  await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col} ${def}`);
+}
+
 export async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS events (
@@ -55,10 +59,18 @@ export async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_cats_space ON categories(space_code);
   `);
+
+  // Câmpuri noi (flexibilitate de planificare).
+  await addColumn("events", "all_day", "BOOLEAN NOT NULL DEFAULT FALSE");
+  await addColumn("events", "priority", "TEXT NOT NULL DEFAULT 'normal'");
+  await addColumn("events", "recurrence", "TEXT NOT NULL DEFAULT 'none'");
+  await addColumn("events", "recurrence_end", "TEXT");
+  // Pentru recurente: ultima ocurență notificată (YYYY-MM-DD).
+  await addColumn("events", "last_notified", "TEXT");
+
   console.log("[db] tabele verificate/create");
 }
 
-/* Interfețe în stil camelCase folosite de restul codului. */
 export interface EventRow {
   id: string;
   spaceCode: string;
@@ -70,6 +82,11 @@ export interface EventRow {
   notes: string | null;
   reminderMinutes: number | null;
   notified: boolean;
+  allDay: boolean;
+  priority: string;
+  recurrence: string;
+  recurrenceEnd: string | null;
+  lastNotified: string | null;
   createdAt: number;
 }
 
@@ -89,7 +106,6 @@ export interface CategoryRow {
   createdAt: number;
 }
 
-/* Mapări rând SQL (snake_case) -> obiect TS (camelCase). */
 export function mapEvent(r: any): EventRow {
   return {
     id: r.id,
@@ -102,6 +118,11 @@ export function mapEvent(r: any): EventRow {
     notes: r.notes,
     reminderMinutes: r.reminder_minutes,
     notified: r.notified,
+    allDay: !!r.all_day,
+    priority: r.priority || "normal",
+    recurrence: r.recurrence || "none",
+    recurrenceEnd: r.recurrence_end,
+    lastNotified: r.last_notified,
     createdAt: Number(r.created_at),
   };
 }

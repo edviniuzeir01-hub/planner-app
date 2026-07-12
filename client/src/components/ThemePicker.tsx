@@ -1,8 +1,15 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { THEMES, getTheme, setTheme } from "../theme";
+import { Lang, T, setLang } from "../i18n";
 
-export default function ThemePicker() {
+interface Props {
+  t: T;
+  lang: Lang;
+  onLangChange: (l: Lang) => void;
+}
+
+export default function ThemePicker({ t, lang, onLangChange }: Props) {
   const [current, setCurrent] = useState(getTheme());
 
   const pick = (id: string) => {
@@ -10,26 +17,47 @@ export default function ThemePicker() {
     setCurrent(id);
   };
 
+  const chooseLang = (l: Lang) => {
+    setLang(l);
+    onLangChange(l);
+  };
+
   return (
     <div className="theme-picker">
-      <h2>Culoare</h2>
+      <h2>{t.color}</h2>
       <div className="theme-swatches">
-        {THEMES.map((t) => (
+        {THEMES.map((th) => (
           <button
-            key={t.id}
-            className={`theme-swatch ${current === t.id ? "active" : ""}`}
-            style={{ background: t.bg }}
-            onClick={() => pick(t.id)}
-            title={t.label}
-            aria-label={t.label}
+            key={th.id}
+            className={`theme-swatch ${current === th.id ? "active" : ""}`}
+            style={{ background: th.bg }}
+            onClick={() => pick(th.id)}
+            title={th.label}
+            aria-label={th.label}
           >
-            {current === t.id ? (
-              <Check size={14} className="swatch-check" style={{ color: t.accent }} />
+            {current === th.id ? (
+              <Check size={14} className="swatch-check" style={{ color: th.accent }} />
             ) : (
-              <span className="swatch-dot" style={{ background: t.accent }} />
+              <span className="swatch-dot" style={{ background: th.accent }} />
             )}
           </button>
         ))}
+      </div>
+
+      <h2 className="lang-head">{t.language}</h2>
+      <div className="seg-group">
+        <button
+          className={`seg ${lang === "ro" ? "active" : ""}`}
+          onClick={() => chooseLang("ro")}
+        >
+          Română
+        </button>
+        <button
+          className={`seg ${lang === "en" ? "active" : ""}`}
+          onClick={() => chooseLang("en")}
+        >
+          English
+        </button>
       </div>
     </div>
   );

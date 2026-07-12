@@ -2,13 +2,15 @@ import { useState } from "react";
 import { Plus, Trash2, Check, X, Pencil } from "lucide-react";
 import { Category, SUGGESTED_COLORS } from "../types";
 import { api } from "../api";
+import { T } from "../i18n";
 
 interface Props {
   categories: Category[];
-  onChanged: () => void; // reîncarcă lista din App
+  t: T;
+  onChanged: () => void;
 }
 
-export default function CategoryManager({ categories, onChanged }: Props) {
+export default function CategoryManager({ categories, t, onChanged }: Props) {
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newColor, setNewColor] = useState(SUGGESTED_COLORS[0]);
@@ -25,12 +27,6 @@ export default function CategoryManager({ categories, onChanged }: Props) {
     onChanged();
   };
 
-  const startEdit = (c: Category) => {
-    setEditId(c.id);
-    setEditLabel(c.label);
-    setEditColor(c.color);
-  };
-
   const saveEdit = async () => {
     if (!editId || !editLabel.trim()) return;
     await api.updateCategory(editId, { label: editLabel.trim(), color: editColor });
@@ -45,8 +41,7 @@ export default function CategoryManager({ categories, onChanged }: Props) {
 
   return (
     <div className="cat-manager">
-      <h2>Categorii</h2>
-
+      <h2>{t.categories}</h2>
       <ul className="cat-list">
         {categories.map((c) =>
           editId === c.id ? (
@@ -56,17 +51,16 @@ export default function CategoryManager({ categories, onChanged }: Props) {
                 value={editColor}
                 onChange={(e) => setEditColor(e.target.value)}
                 className="color-input"
-                aria-label="Culoare"
               />
               <input
                 className="cat-name-input"
                 value={editLabel}
                 onChange={(e) => setEditLabel(e.target.value)}
               />
-              <button className="icon-btn ok" onClick={saveEdit} aria-label="Salvează">
+              <button className="icon-btn ok" onClick={saveEdit} aria-label={t.save}>
                 <Check size={14} />
               </button>
-              <button className="icon-btn" onClick={() => setEditId(null)} aria-label="Anulează">
+              <button className="icon-btn" onClick={() => setEditId(null)} aria-label={t.cancel}>
                 <X size={14} />
               </button>
             </li>
@@ -74,10 +68,18 @@ export default function CategoryManager({ categories, onChanged }: Props) {
             <li key={c.id} className="cat-row">
               <span className="cat-dot" style={{ background: c.color }} />
               <span className="cat-name">{c.label}</span>
-              <button className="icon-btn" onClick={() => startEdit(c)} aria-label="Editează">
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setEditId(c.id);
+                  setEditLabel(c.label);
+                  setEditColor(c.color);
+                }}
+                aria-label="edit"
+              >
                 <Pencil size={13} />
               </button>
-              <button className="icon-btn danger" onClick={() => remove(c.id)} aria-label="Șterge">
+              <button className="icon-btn danger" onClick={() => remove(c.id)} aria-label={t.delete}>
                 <Trash2 size={13} />
               </button>
             </li>
@@ -93,11 +95,10 @@ export default function CategoryManager({ categories, onChanged }: Props) {
               value={newColor}
               onChange={(e) => setNewColor(e.target.value)}
               className="color-input"
-              aria-label="Culoare"
             />
             <input
               className="cat-name-input"
-              placeholder="nume categorie"
+              placeholder={t.categoryName}
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               autoFocus
@@ -116,16 +117,16 @@ export default function CategoryManager({ categories, onChanged }: Props) {
           </div>
           <div className="cat-add-actions">
             <button className="btn-ghost" onClick={() => setAdding(false)}>
-              Anulează
+              {t.cancel}
             </button>
             <button className="btn-primary" onClick={add}>
-              Adaugă
+              {t.add}
             </button>
           </div>
         </div>
       ) : (
         <button className="cat-add-btn" onClick={() => setAdding(true)}>
-          <Plus size={13} /> Categorie nouă
+          <Plus size={13} /> {t.newCategory}
         </button>
       )}
     </div>

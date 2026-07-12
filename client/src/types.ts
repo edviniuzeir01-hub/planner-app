@@ -1,13 +1,26 @@
+export type Recurrence = "none" | "daily" | "weekly" | "monthly";
+export type Priority = "low" | "normal" | "high";
+
 export interface PlannerEvent {
   id: string;
   title: string;
-  date: string; // YYYY-MM-DD
-  startTime: string; // HH:MM
+  date: string;          // YYYY-MM-DD (data de start / prima ocurență)
+  startTime: string;     // HH:MM ("" dacă e toată ziua)
   endTime: string;
-  category: string; // id-ul categoriei (dinamic, per utilizator)
+  category: string;
   notes: string;
   reminderMinutes: number | null;
   notified: boolean;
+  allDay: boolean;
+  priority: Priority;
+  recurrence: Recurrence;
+  recurrenceEnd: string; // "" = fără sfârșit
+}
+
+// O ocurență concretă afișată în calendar (evenimentele recurente produc mai multe).
+export interface Occurrence extends PlannerEvent {
+  occDate: string;       // data acestei apariții
+  key: string;           // id + dată (unic pentru React)
 }
 
 export type EventDraft = Omit<PlannerEvent, "id" | "notified"> & { id: string | null };
@@ -18,33 +31,16 @@ export interface Category {
   color: string;
 }
 
-// Hartă id -> {label,color} pentru afișare rapidă în componente.
 export type CatMap = Record<string, { label: string; color: string }>;
 
-// Afișat când un eveniment are o categorie ștearsă între timp.
-export const FALLBACK_CATEGORY = { label: "Fără categorie", color: "#8A8A8A" };
-
-export function catOf(map: CatMap, id: string) {
-  return map[id] || FALLBACK_CATEGORY;
+export function catOf(map: CatMap, id: string, fallbackLabel: string) {
+  return map[id] || { label: fallbackLabel, color: "#8A8A8A" };
 }
 
-export const REMINDER_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "Fără reminder" },
-  { value: "5", label: "cu 5 minute înainte" },
-  { value: "15", label: "cu 15 minute înainte" },
-  { value: "30", label: "cu 30 minute înainte" },
-  { value: "60", label: "cu 1 oră înainte" },
-  { value: "1440", label: "cu 1 zi înainte" },
-];
-
-// Culori sugerate pentru categorii noi (utilizatorul poate alege și altele).
 export const SUGGESTED_COLORS = [
-  "#6FB8AE", "#D19A4A", "#C97B72", "#D6564A", "#9B8AC4",
-  "#5BA3E0", "#E884B4", "#3FC9BE", "#E89A4A", "#8DA2C0",
+  "#5BA3E0", "#6FB8AE", "#7FC08A", "#E884B4", "#D6564A",
+  "#D19A4A", "#9B8AC4", "#3FC9BE", "#E89A4A", "#8DA2C0",
 ];
 
-export const DAY_LABELS = ["Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du"];
-export const MONTH_NAMES = [
-  "Ianuarie", "Februarie", "Martie", "Aprilie", "Mai", "Iunie",
-  "Iulie", "August", "Septembrie", "Octombrie", "Noiembrie", "Decembrie",
-];
+// Presetări de reminder (în minute). „custom" deschide un câmp liber.
+export const REMINDER_PRESETS = [0, 5, 15, 30, 60, 120, 1440, 2880];

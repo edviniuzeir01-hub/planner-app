@@ -27,10 +27,3 @@ export function minutesUntil(dateStr: string, timeStr: string) {
   const target = new Date(`${dateStr}T${timeStr || "00:00"}:00`);
   return Math.round((target.getTime() - Date.now()) / 60000);
 }
-
-export function humanCountdown(mins: number) {
-  if (mins < 0) return "trecut";
-  if (mins < 60) return `peste ${mins} min`;
-  if (mins < 60 * 24) return `peste ${Math.round(mins / 60)} h`;
-  return `peste ${Math.round(mins / (60 * 24))} zile`;
-}

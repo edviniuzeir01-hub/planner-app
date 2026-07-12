@@ -3,12 +3,12 @@ import {
   Plus, Bell, BellOff, ChevronLeft, ChevronRight, Search,
   CalendarDays, ListChecks, CalendarClock,
 } from "lucide-react";
-import {
-  CatMap, catOf, Category, MONTH_NAMES, PlannerEvent, EventDraft,
-} from "./types";
-import { fmtDate, parseDate, getCalendarGrid, minutesUntil, humanCountdown } from "./date";
+import { CatMap, catOf, Category, Occurrence, PlannerEvent, EventDraft } from "./types";
+import { fmtDate, parseDate, getCalendarGrid, minutesUntil } from "./date";
+import { expandAll } from "./recurrence";
 import { api } from "./api";
 import { enablePush, currentPermission, PushState } from "./push";
+import { getLang, t as tr, Lang } from "./i18n";
 import MonthView from "./components/MonthView";
 import DayView from "./components/DayView";
 import AgendaView from "./components/AgendaView";
@@ -20,6 +20,9 @@ import CategoryManager from "./components/CategoryManager";
 type ViewMode = "month" | "day" | "agenda";
 
 export default function App() {
+  const [lang, setLang] = useState<Lang>(getLang());
+  const t = tr(lang);
+
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [view, setView] = useState<ViewMode>("month");
@@ -27,7 +30,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [draft, setDraft] = useState<EventDraft | null>(null);
   const [search, setSearch] = useState("");
-  const [activeCats, setActiveCats] = useState<string[] | null>(null); // null = toate active
+  const [activeCats, setActiveCats] = useState<string[] | null>(null);
   const [pushState, setPushState] = useState<PushState>(currentPermission());
   const [vapidKey, setVapidKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,15 +53,16 @@ export default function App() {
       setCategories(cats);
       setVapidKey(cfg.vapidPublicKey);
       if (!cfg.pushEnabled) setPushState("no-keys");
-    } catch (e) {
-      setError("Nu mă pot conecta la server. Verifică dacă rulează.");
+      setError(null);
+    } catch {
+      setError(t.connectionError);
     }
-  }, []);
+  }, [t.connectionError]);
 
   const reloadCategories = useCallback(async () => {
     try {
       setCategories(await api.listCategories());
-    } catch (e) {
+    } catch {
       /* ignore */
     }
   }, []);
@@ -70,15 +74,12 @@ export default function App() {
   }, [reload]);
 
   /* ---- push ---- */
-  const handleEnablePush = async () => {
-    const state = await enablePush(vapidKey);
-    setPushState(state);
-  };
+  const handleEnablePush = async () => setPushState(await enablePush(vapidKey));
 
   /* ---- CRUD ---- */
-  const firstCat = categories[0]?.id || "altele";
+  const firstCat = categories[0]?.id || "personal";
 
-  const openAdd = (date: Date) => {
+  const openAdd = (date: Date) =>
     setDraft({
       id: null,
       title: "",
@@ -88,10 +89,17 @@ export default function App() {
       category: firstCat,
       notes: "",
       reminderMinutes: 15,
+      allDay: false,
+      priority: "normal",
+      recurrence: "none",
+      recurrenceEnd: "",
     });
-  };
 
-  const openEdit = (ev: PlannerEvent) => setDraft({ ...ev });
+  // La editarea unei ocurențe edităm evenimentul-șablon.
+  const openEdit = (occ: Occurrence) => {
+    const base = events.find((e) => e.id === occ.id);
+    if (base) setDraft({ ...base });
+  };
 
   const saveDraft = async () => {
     if (!draft || !draft.title.trim() || !draft.date) return;
@@ -103,18 +111,22 @@ export default function App() {
       category: draft.category,
       notes: draft.notes,
       reminderMinutes: draft.reminderMinutes,
+      allDay: draft.allDay,
+      priority: draft.priority,
+      recurrence: draft.recurrence,
+      recurrenceEnd: draft.recurrenceEnd,
     };
     try {
       if (draft.id) {
-        const updated = await api.updateEvent(draft.id, payload);
-        setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+        const up = await api.updateEvent(draft.id, payload);
+        setEvents((p) => p.map((e) => (e.id === up.id ? up : e)));
       } else {
         const created = await api.createEvent(payload);
-        setEvents((prev) => [...prev, created]);
+        setEvents((p) => [...p, created]);
       }
       setDraft(null);
-    } catch (e) {
-      setError("Salvarea a eșuat. Verifică serverul.");
+    } catch {
+      setError(t.saveError);
     }
   };
 
@@ -122,15 +134,15 @@ export default function App() {
     if (!draft?.id) return;
     try {
       await api.deleteEvent(draft.id);
-      setEvents((prev) => prev.filter((e) => e.id !== draft.id));
+      setEvents((p) => p.filter((e) => e.id !== draft.id));
       setDraft(null);
-    } catch (e) {
-      setError("Ștergerea a eșuat.");
+    } catch {
+      setError(t.deleteError);
     }
   };
 
-  /* ---- derived ---- */
-  const filteredEvents = useMemo(() => {
+  /* ---- derived: filtrare + extindere recurențe ---- */
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return events.filter((e) => {
       if (activeCats && !activeCats.includes(e.category)) return false;
@@ -139,61 +151,75 @@ export default function App() {
     });
   }, [events, activeCats, search]);
 
-  const eventsByDate = useMemo(() => {
-    const map: Record<string, PlannerEvent[]> = {};
-    filteredEvents.forEach((e) => {
-      (map[e.date] = map[e.date] || []).push(e);
-    });
-    Object.values(map).forEach((list) =>
-      list.sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""))
+  // Fereastră largă, ca să acopere luna afișată + agenda viitoare.
+  const window_ = useMemo(() => {
+    const from = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+    const to = new Date(cursor.getFullYear(), cursor.getMonth() + 13, 0);
+    const today = new Date();
+    return {
+      from: fmtDate(from < today ? from : today),
+      to: fmtDate(to),
+    };
+  }, [cursor]);
+
+  const occurrences = useMemo(
+    () => expandAll(filtered, window_.from, window_.to),
+    [filtered, window_]
+  );
+
+  const byDate = useMemo(() => {
+    const m: Record<string, Occurrence[]> = {};
+    occurrences.forEach((o) => (m[o.occDate] = m[o.occDate] || []).push(o));
+    Object.values(m).forEach((list) =>
+      list.sort((a, b) => {
+        if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
+        return (a.startTime || "").localeCompare(b.startTime || "");
+      })
     );
-    return map;
-  }, [filteredEvents]);
+    return m;
+  }, [occurrences]);
 
   const upcoming = useMemo(() => {
     const now = new Date();
-    return filteredEvents
-      .filter((e) => new Date(`${e.date}T${e.startTime || "00:00"}:00`) >= now)
+    return occurrences
+      .filter((o) => new Date(`${o.occDate}T${o.allDay ? "23:59" : o.startTime || "00:00"}:00`) >= now)
       .sort(
         (a, b) =>
-          new Date(`${a.date}T${a.startTime || "00:00"}:00`).getTime() -
-          new Date(`${b.date}T${b.startTime || "00:00"}:00`).getTime()
+          new Date(`${a.occDate}T${a.startTime || "00:00"}:00`).getTime() -
+          new Date(`${b.occDate}T${b.startTime || "00:00"}:00`).getTime()
       )
       .slice(0, 6);
-  }, [filteredEvents]);
+  }, [occurrences]);
 
   const grid = useMemo(
     () => getCalendarGrid(cursor.getFullYear(), cursor.getMonth()),
     [cursor]
   );
 
-  const toggleCat = (id: string) => {
+  const toggleCat = (id: string) =>
     setActiveCats((prev) => {
       const base = prev ?? categories.map((c) => c.id);
       return base.includes(id) ? base.filter((c) => c !== id) : [...base, id];
     });
-  };
   const isCatActive = (id: string) => !activeCats || activeCats.includes(id);
 
-  const goToday = () => {
-    const t = new Date();
-    setCursor(t);
-    setSelectedDate(t);
+  const countdown = (mins: number) => {
+    if (mins < 0) return t.past;
+    if (mins < 60) return t.inTime(`${mins} min`);
+    if (mins < 1440) return t.inTime(`${Math.round(mins / 60)} h`);
+    return t.inTime(`${Math.round(mins / 1440)} ${t.days}`);
   };
-
-  const changeMonth = (delta: number) =>
-    setCursor((c) => new Date(c.getFullYear(), c.getMonth() + delta, 1));
 
   const pushLabel =
     pushState === "granted"
-      ? "Notificări active"
+      ? t.notificationsOn
       : pushState === "denied"
-      ? "Notificări blocate"
+      ? t.notificationsBlocked
       : pushState === "unsupported"
-      ? "Indisponibile pe acest dispozitiv"
+      ? t.notificationsUnavailable
       : pushState === "no-keys"
-      ? "Configurează cheile VAPID"
-      : "Activează notificări";
+      ? t.notificationsSetup
+      : t.enableNotifications;
 
   return (
     <div className="planner">
@@ -201,20 +227,20 @@ export default function App() {
         <div className="brand">
           <span className="brand-dot" />
           <div>
-            <h1>Planner</h1>
-            <p>organizează-ți timpul, cu reminder</p>
+            <h1>{t.appName}</h1>
+            <p>{t.tagline}</p>
           </div>
         </div>
 
-        <div className="view-tabs" role="tablist" aria-label="Vizualizare">
+        <div className="view-tabs" role="tablist">
           <button className={view === "month" ? "active" : ""} onClick={() => setView("month")}>
-            <CalendarDays size={15} /> Lună
+            <CalendarDays size={15} /> {t.month}
           </button>
           <button className={view === "day" ? "active" : ""} onClick={() => setView("day")}>
-            <CalendarClock size={15} /> Zi
+            <CalendarClock size={15} /> {t.day}
           </button>
           <button className={view === "agenda" ? "active" : ""} onClick={() => setView("agenda")}>
-            <ListChecks size={15} /> Agendă
+            <ListChecks size={15} /> {t.agenda}
           </button>
         </div>
 
@@ -234,24 +260,35 @@ export default function App() {
         <main className="content">
           <div className="controls">
             <div className="month-nav">
-              <button onClick={() => changeMonth(-1)} aria-label="Luna precedentă">
+              <button
+                onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))}
+              >
                 <ChevronLeft size={18} />
               </button>
               <span className="month-label">
-                {MONTH_NAMES[cursor.getMonth()]} {cursor.getFullYear()}
+                {t.months[cursor.getMonth()]} {cursor.getFullYear()}
               </span>
-              <button onClick={() => changeMonth(1)} aria-label="Luna următoare">
+              <button
+                onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))}
+              >
                 <ChevronRight size={18} />
               </button>
-              <button className="today-btn" onClick={goToday}>
-                Azi
+              <button
+                className="today-btn"
+                onClick={() => {
+                  const d = new Date();
+                  setCursor(d);
+                  setSelectedDate(d);
+                }}
+              >
+                {t.today}
               </button>
             </div>
 
             <div className="search-box">
               <Search size={14} />
               <input
-                placeholder="Caută evenimente…"
+                placeholder={t.search}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -275,9 +312,10 @@ export default function App() {
           {view === "month" && (
             <MonthView
               grid={grid}
-              eventsByDate={eventsByDate}
+              byDate={byDate}
               catMap={catMap}
               selectedDate={selectedDate}
+              t={t}
               onSelect={(d) => {
                 setSelectedDate(d);
                 setView("day");
@@ -289,8 +327,9 @@ export default function App() {
           {view === "day" && (
             <DayView
               date={selectedDate}
-              events={eventsByDate[fmtDate(selectedDate)] || []}
+              items={byDate[fmtDate(selectedDate)] || []}
               catMap={catMap}
+              t={t}
               onPrev={() =>
                 setSelectedDate((d) => {
                   const n = new Date(d);
@@ -311,33 +350,32 @@ export default function App() {
           )}
 
           {view === "agenda" && (
-            <AgendaView eventsByDate={eventsByDate} catMap={catMap} onEdit={openEdit} onAdd={openAdd} />
+            <AgendaView byDate={byDate} catMap={catMap} t={t} onEdit={openEdit} onAdd={openAdd} />
           )}
         </main>
 
         <aside className="sidebar">
-          <h2>Următoarele evenimente</h2>
-          {upcoming.length === 0 && (
-            <p className="empty-note">Nimic programat. Adaugă un eveniment ca să apară aici.</p>
-          )}
+          <h2>{t.upcoming}</h2>
+          {upcoming.length === 0 && <p className="empty-note">{t.nothingPlanned}</p>}
           <ul className="upcoming-list">
             {upcoming.map((ev) => {
-              const mins = minutesUntil(ev.date, ev.startTime);
-              const cat = catOf(catMap, ev.category);
+              const cat = catOf(catMap, ev.category, t.noCategory);
+              const mins = minutesUntil(ev.occDate, ev.allDay ? "09:00" : ev.startTime);
               return (
-                <li key={ev.id} onClick={() => openEdit(ev)}>
+                <li key={ev.key} onClick={() => openEdit(ev)}>
                   <span className="dot" style={{ background: cat.color }} />
                   <div>
                     <p className="u-title">{ev.title}</p>
                     <p className="u-meta">
-                      {parseDate(ev.date).toLocaleDateString("ro-RO", {
+                      {parseDate(ev.occDate).toLocaleDateString(t.locale, {
                         day: "2-digit",
                         month: "short",
                       })}
-                      {ev.startTime ? ` · ${ev.startTime}` : ""} · {humanCountdown(mins)}
+                      {ev.allDay ? "" : ev.startTime ? ` · ${ev.startTime}` : ""} ·{" "}
+                      {countdown(mins)}
                     </p>
                   </div>
-                  {ev.reminderMinutes ? <Bell size={13} className="bell-mini" /> : null}
+                  {ev.reminderMinutes !== null && <Bell size={13} className="bell-mini" />}
                 </li>
               );
             })}
@@ -345,23 +383,21 @@ export default function App() {
 
           {pushState === "granted" && (
             <button className="btn-ghost test-btn" onClick={() => api.testPush()}>
-              Trimite notificare de test
+              {t.testNotification}
             </button>
           )}
 
-          <CategoryManager categories={categories} onChanged={reloadCategories} />
-
-          <AccountPanel onSwitched={reload} />
-
-          <ThemePicker />
+          <CategoryManager categories={categories} t={t} onChanged={reloadCategories} />
+          <AccountPanel t={t} onSwitched={reload} />
+          <ThemePicker t={t} lang={lang} onLangChange={setLang} />
 
           <button className="fab-desktop" onClick={() => openAdd(selectedDate)}>
-            <Plus size={16} /> Eveniment nou
+            <Plus size={16} /> {t.newEvent}
           </button>
         </aside>
       </div>
 
-      <button className="fab" onClick={() => openAdd(selectedDate)} aria-label="Adaugă eveniment">
+      <button className="fab" onClick={() => openAdd(selectedDate)} aria-label={t.addEvent}>
         <Plus size={22} />
       </button>
 
@@ -369,6 +405,7 @@ export default function App() {
         <EventModal
           draft={draft}
           categories={categories}
+          t={t}
           setDraft={setDraft}
           onSave={saveDraft}
           onDelete={draft.id ? deleteDraft : null}
